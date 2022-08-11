@@ -1,0 +1,55 @@
+---
+- name: Clean up docker container
+  hosts: all
+  gather_facts: false
+  become: true
+
+
+  tasks:
+    # - name: Stop docker
+    #   docker_container:
+    #     name: "{{ item.container }}"
+    #     image: "{{item.image}}"
+    #     state: stopped
+    #     working_dir: "/home/{{ dev_user }}/GIT/github/ansible/awx"
+    #     force_kill: true
+    #     keep_volumes: False
+    #   become_user: "{{dev_user}}"
+    #   loop: "{{ docker_containers }}"
+
+    - name: Remove docker containers
+      docker_container:
+        name: "{{item.container}}"
+        state: absent
+      become_user: "{{dev_user}}"
+      loop: "{{ docker_containers }}"
+
+    - name: Remove docker images
+      docker_image:
+        name: "{{ item.image }}"
+        state: absent
+        force_absent: True
+      become_user: "{{ dev_user }}"
+      loop: "{{ docker_containers}}"
+
+    - name: Install docker prune module
+      command:
+        cmd: ansible-galaxy collection install community.docker
+        chdir: "~{{ dev_user }}/GIT/github/{{ github_user }}/awx"
+      become_user: "{{dev_user}}"
+
+    - name: Prune everything (including non-dangling images)
+      community.docker.docker_prune:
+        containers: yes
+        images: yes
+        images_filters:
+          dangling: false
+        networks: yes
+        volumes: yes
+        builder_cache: yes
+    - name: Docker Clean
+      command:
+        cmd: docker volume rm -f tools_awx_db tools_grafana_storage
+        chdir: "~{{ dev_user }}/GIT/github/{{ github_user }}/awx"
+      become_user: "{{dev_user}}"
+

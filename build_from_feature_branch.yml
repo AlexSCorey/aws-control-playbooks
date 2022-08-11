@@ -1,0 +1,36 @@
+---
+- name: Build from feature Branch
+  hosts: all
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Fetch upstream
+      command:
+        cmd: git fetch origin
+        chdir: "~{{ dev_user }}/GIT/github/ansible/awx"
+      become_user: "{{ dev_user }}"
+
+    - name: See if feature branch already exists locally
+      command:
+        cmd: git branch
+        chdir: "~{{ dev_user }}/GIT/github/ansible/awx"
+      become_user: "{{ dev_user }}"
+      register: branches
+
+    - name: Debug branches
+      debug:
+          msg: " {{ feature_branch }} in {{ branches.stdout_lines }}"
+
+    - name: Checkout feature branch
+      command:
+        cmd: git checkout -b {{ feature_branch }}
+        chdir: "~{{ dev_user }}/GIT/github/ansible/awx"
+      become_user: "{{ dev_user }}"
+      when: feature_branch not in  branches.stdout_liness
+
+    - name: Pull in upstream feature branch
+      command:
+        cmd: git rebase origin/{{ feature_branch }}
+        chdir: "~{{ dev_user }}/GIT/github/ansible/awx"
+      become_user: "{{ dev_user }}"

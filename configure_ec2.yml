@@ -1,0 +1,178 @@
+---
+- name: Configure EC2 instance for AWS dev env.
+  hosts: all
+  gather_facts: false
+  become: true
+
+
+  tasks:
+    - name: install all rpm packages
+      package:
+        name:
+          - git
+          - ansible
+          - python3-virtualenv
+          - "{{ editor }}"
+          - dnf-plugins-core
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose
+          - libtool-ltdl-devel
+          - openssl
+          - postgresql
+          - libpq-devel
+          - gcc
+          - '@nodejs:16/common'
+          - libxml2-devel
+          - python-devel
+          - openldap-devel
+          - xmlsec1-devel
+          - libffi-devel
+          - chrony
+    - name: Enable chronyd
+      service:
+        name: chronyd
+        enabled: True
+        state: started
+
+    - name: Configure Git SSH key
+      copy:
+        content: |
+          {{ lookup('file', github_key_file) }}
+
+        dest: "~{{ dev_user }}/.ssh/github_rsa"
+        mode: 0600
+        owner: "{{ dev_user }}"
+
+    - name: Configure SSH key in GitHub
+      copy:
+        content: |
+          Host github.com
+            IdentityFile ~/.ssh/github_rsa
+        dest: "~{{ dev_user }}/.ssh/config"
+        mode: 0600
+        owner: "{{ dev_user }}"
+
+    - name: Create ~/GIT folder structure
+      file:
+        state: directory
+        path: "~{{ dev_user }}/{{ item }}"
+        owner: "{{ dev_user }}"
+      loop:
+        - "GIT"
+        - "GIT/github"
+        - "GIT/github/ansible"
+        - "GIT/github/{{ github_user }}"
+
+    - name: Clone ansible repos
+      git:
+        accept_hostkey: True
+        key_file: "~{{ dev_user }}/.ssh/github_rsa"
+        clone: True
+        dest: "~{{ dev_user }}/GIT/github/{{ item }}"
+        repo: "git@github.com:{{ item }}.git"
+        update: False
+      loop: "{{ repos }}"
+      become_user: "{{ dev_user }}"
+
+    - name: Get existing remotes
+      command:
+        cmd: git remote show
+        chdir: "~{{ dev_user }}/GIT/github/{{ github_user }}/awx"
+      become_user: "{{ dev_user }}"
+      register: remotes
+
+    - name: Add anible/awx to my local repo as a remote
+      command:
+        cmd: git remote add upstream git@github.com:ansible/awx.git
+        chdir: "~{{ dev_user }}/GIT/github/{{ github_user }}/awx"
+      become_user: "{{ dev_user }}"
+      when: "'upstream' not in remotes.stdout_lines"
+
+    - name: Pulls upstream
+      command:
+        cmd: git fetch upstream
+        chdir: "~{{ dev_user }}/GIT/github/{{ github_user }}/awx"
+      become_user: "{{ dev_user }}"
+
+    - name: Rebase my local fork onto awx/devel
+      command:
+        cmd: git rebase upstream/devel
+        chdir: "~{{ dev_user }}/GIT/github/{{ github_user }}/awx"
+      become_user: "{{ dev_user }}"
+
+    - name: Updates remote fork
+      command:
+        cmd: git push origin devel
+        chdir: "~{{ dev_user }}/GIT/github/{{ github_user }}/awx"
+      become_user: "{{ dev_user }}"
+
+    - name: Set git config
+      git_config:
+        scope: global
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+      loop: "{{ git_config }}"
+      become_user: "{{ dev_user }}"
+
+    - name: Create virtualenvs directory
+      file:
+        path: "{{ venv_dir }}"
+        owner: "{{ dev_user }}"
+        state: directory
+
+    - name: Create virtualenvs
+      pip:
+        name: "{{ item.pkgs }}"
+        virtualenv: "{{ venv_dir }}/{{ item.name }}"
+      loop: "{{ virtual_envs }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: virtual_envs | default([]) | length() > 0
+      become_user: "{{ dev_user }}"
+
+    - name: Add user info for .bashrc
+      blockinfile:
+        block: |
+          EDITOR=`which {{ editor }}`
+          source ~/virtualenvs/awx/bin/activate
+          cd ~/GIT/github/{{ github_user }}/awx
+          export PYTHON=python3.9
+          export VENV_BASE=~/virtualenvs/awx
+          alias awx-shell='docker exec -it tools_awx_1 /bin/bash'
+          alias awx_shell='docker exec -it tools_awx_1 /bin/bash'
+          alias awxshell='docker exec -it tools_awx_1 /bin/bash'
+          alias dev-ui='cd ~/GIT/github/{{ github_user }}/awx/awx/ui && npm ci && npm run start'
+          alias awx-manage='docker exec -it tools_awx_1 awx-manage $*'
+        path: "~{{ dev_user }}/.bashrc"
+        insertafter: "# User specific aliases and functions"
+      become_user: "{{ dev_user }}"
+
+    - name: Make UI Devel (to force NPM requirement installation)
+      command:
+        cmd: make ui-devel
+        chdir: "~{{ dev_user }}/GIT/github/{{ github_user }}/awx"
+        creates: "awx/ui/node_modules"
+      become_user: "{{ dev_user }}"
+
+    - name: Make virtualenv to populate the awx venv
+      command:
+        cmd: make virtualenv
+        chdir: "~{{ dev_user }}/GIT/github/{{ github_user }}/awx"
+      become_user: "{{ dev_user }}"
+
+    - name: Make test requirements
+      command:
+        cmd: make requirements_test
+        chdir: "~{{ dev_user }}/GIT/github/{{ github_user }}/awx"
+      become_user: "{{ dev_user }}"
+    # - name: Start back end server
+    #   command:
+    #     cmd: make docker-compose COMPOSE_TAG=devel
+    #     chdir: "~{{ dev_user }}/GIT/github/{{ github_user }}/awx"
+    #   become_user: "{{ dev_user}}"
+
+
+#  add steps for make-docker docker-compose
+
